@@ -1,0 +1,375 @@
+# ESPHome-Konfiguration für ESP32-C6 DevKit C N4R2
+# Board: esp32-c6-devkitc-1
+# Variante: esp32c6
+
+esphome:
+  name: weatherstation-esp32-c6
+
+esp32:
+  board: esp32-c6-devkitc-1
+  variant: esp32c6
+
+wifi:
+  ssid: "FRITZ!Box 7360 SL"
+  password: "3226285563773954"
+
+  fast_connect: true
+  power_save_mode: none
+# Kein Wechseln in AP Mode, wenn das WLAN weg. So rebootet der ESP nach 15 Minuten, wenn er keine Verbindung aufbauen kann
+# Enable fallback hotspot (captive portal) in case wifi connection fails
+#  ap:
+#    ssid: "esp-weatherstation-c6"
+#    password: "PRL3C6yKTJ"
+#captive_portal:
+
+logger:
+
+web_server:
+  port: 80
+
+api:
+  reboot_timeout: 15min
+
+ota:
+  - platform: esphome
+    password: "1234321234543212345654321"
+
+i2c:
+  sda: GPIO21
+  scl: GPIO22
+  scan: true
+
+globals:
+  - id: rain_pulse_count
+    type: int
+    initial_value: '0'
+  - id: rain_last_hour_mm
+    type: float
+    initial_value: '0.0'
+  - id: rain_timestamps
+    type: long[100]
+  - id: rain_timestamp_index
+    type: int
+    initial_value: '0'
+  - id: rain_today_mm
+    type: float
+    initial_value: '0.0'
+
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: Europe/Berlin
+
+    on_time:
+      - seconds: 0
+        minutes: 0
+        hours: 0
+        then:
+          - lambda: |-
+              id(rain_today_mm) = 0.0;
+
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO11
+      mode: INPUT_PULLUP
+    name: "Regen-Impuls"
+    filters:
+      - delayed_on: 10ms
+    on_press:
+      then:
+        - lambda: |-
+            id(rain_pulse_count) += 1;
+            id(rain_timestamps)[id(rain_timestamp_index)] = millis();
+            id(rain_timestamp_index) = (id(rain_timestamp_index) + 1) % 100;
+            id(rain_today_mm) += 0.297;
+
+sensor:
+  - platform: bme280_i2c
+    address: 0x76
+    temperature:
+      name: "Wetterstation Temperatur"
+      id: bme280_temperature
+      oversampling: 16x
+    humidity:
+      name: "Wetterstation Luftfeuchtigkeit"
+      id: bme280_humidity
+    pressure:
+      name: "Wetterstation Luftdruck"
+      id: bme280_pressure
+    update_interval: 60s
+
+  - platform: template
+    name: "Niederschlag letzte Stunde (gleitend)"
+    id: rain_last_hour_rolling_sensor
+    unit_of_measurement: "mm"
+    accuracy_decimals: 2
+    lambda: |-
+      auto now = millis();
+      float total_mm = 0.0;
+      for (int i = 0; i < 100; i++) {
+        if (id(rain_timestamps)[i] != 0 && now - id(rain_timestamps)[i] <= 3600000) {
+          total_mm += 0.297;
+        }
+      }
+      return total_mm;
+    update_interval: 60s
+
+  - platform: template
+    name: "Niederschlag heute"
+    id: rain_today_sensor
+    unit_of_measurement: "mm"
+    accuracy_decimals: 1
+    lambda: |-
+      return id(rain_today_mm);
+    update_interval: 60s
+
+  - platform: pulse_meter
+    pin:
+      number: GPIO16
+      mode: INPUT
+    id: wind_speed
+    unit_of_measurement: 'm/s'
+    name: "Windgeschwindigkeit (m/s)"
+    icon: 'mdi:weather-windy'
+    internal_filter: 50us
+    timeout: 5s
+    filters:
+      - multiply: 0.005560619
+      - sliding_window_moving_average:
+          window_size: 5
+          send_every: 5
+      - median:
+          window_size: 7
+          send_every: 3
+
+  - platform: copy
+    name: 'Windgeschwindigkeit Durchschnitt (m/s)'
+    icon: 'mdi:weather-windy'
+    id: wind_speed_avg
+    source_id: wind_speed
+    unit_of_measurement: 'm/s'
+    filters:
+      - throttle_average: 5s
+
+  - platform: copy
+    name: 'Windgeschwindigkeit '
+    id: wind_speed_kmh
+    source_id: wind_speed
+    unit_of_measurement: 'km/h'
+    icon: 'mdi:weather-windy'
+    filters:
+      - multiply: 3.6
+
+  - platform: copy
+    name: 'Windgeschwindigkeit Durchschnitt (km/h)'
+    icon: 'mdi:weather-windy'
+    id: wind_speed_kmh_avg
+    source_id: wind_speed_avg
+    unit_of_measurement: 'km/h'
+    filters:
+      - multiply: 3.6
+    on_value:
+      lambda: |-
+        if (x < 1) {
+          id(wind_scale_code).publish_state("0 Bft");
+          id(wind_scale).publish_state("Windstille");
+        } else if (x >= 1 && x < 6) {
+          id(wind_scale_code).publish_state("1 Bft");
+          id(wind_scale).publish_state("leiser Zug");
+        } else if (x >= 6 && x < 12) {
+          id(wind_scale_code).publish_state("2 Bft");
+          id(wind_scale).publish_state("leichte Brise");
+        } else if (x >= 12 && x < 20) {
+          id(wind_scale_code).publish_state("3 Bft");
+          id(wind_scale).publish_state("Schwache Brise");
+        } else if (x >= 20 && x < 29) {
+          id(wind_scale_code).publish_state("4 Bft");
+          id(wind_scale).publish_state("Mäßige Brise");
+        } else if (x >= 29 && x < 39) {
+          id(wind_scale_code).publish_state("5 Bft");
+          id(wind_scale).publish_state("Frische Brise");
+        } else if (x >= 39 && x < 50) {
+          id(wind_scale_code).publish_state("6 Bft");
+          id(wind_scale).publish_state("Starker Wind");
+        } else if (x >= 50 && x < 62) {
+          id(wind_scale_code).publish_state("7 Bft");
+          id(wind_scale).publish_state("Steifer Wind");
+        } else if (x >= 62 && x < 75) {
+          id(wind_scale_code).publish_state("8 Bft");
+          id(wind_scale).publish_state("Stürmischer Wind");
+        } else if (x >= 75 && x < 89) {
+          id(wind_scale_code).publish_state("9 Bft");
+          id(wind_scale).publish_state("Sturm");
+        } else if (x >= 89 && x < 103) {
+          id(wind_scale_code).publish_state("10 Bft");
+          id(wind_scale).publish_state("Schwerer Sturm");
+        } else if (x >= 103 && x < 118) {
+          id(wind_scale_code).publish_state("11 Bft");
+          id(wind_scale).publish_state("Orkanartiger Sturm");
+        } else if (x >= 118) {
+          id(wind_scale_code).publish_state("12 Bft");
+          id(wind_scale).publish_state("Orkan");
+        } else {
+          ESP_LOGD("main", "Das sollte nicht vorkommen (wind_speed_kmh_avg: %f)", x);
+        }
+
+  - platform: adc
+    id: source_sensor
+    pin: A0
+    name: ADC
+    internal: true
+    update_interval: 5s
+    accuracy_decimals: 1
+    filters:
+      - multiply: 3.3
+
+  - platform: resistance
+    sensor: source_sensor
+    id: resistance_sensor
+    configuration: DOWNSTREAM
+    resistor: 10kOhm
+    internal: true
+    name: Resistance Sensor
+    reference_voltage: 3.9V
+    accuracy_decimals: 1
+    filters:
+      - median:
+          window_size: 7
+          send_every: 4
+          send_first_at: 3
+    on_value:
+      - if:
+          condition:
+            sensor.in_range:
+              id: resistance_sensor
+              above: 100
+              below: 1500
+          then:
+            - text_sensor.template.publish:
+                id: wind_dir_card
+                state: "N"
+            - sensor.template.publish:
+                id: wind_heading
+                state: 0.0
+      - if:
+          condition:
+            sensor.in_range:
+              id: resistance_sensor
+              above: 1600
+              below: 2700
+          then:
+            - text_sensor.template.publish:
+                id: wind_dir_card
+                state: "NO"
+            - sensor.template.publish:
+                id: wind_heading
+                state: 45.0
+      - if:
+          condition:
+            sensor.in_range:
+              id: resistance_sensor
+              above: 2800
+              below: 4500
+          then:
+            - text_sensor.template.publish:
+                id: wind_dir_card
+                state: "O"
+            - sensor.template.publish:
+                id: wind_heading
+                state: 90.0
+      - if:
+          condition:
+            sensor.in_range:
+              id: resistance_sensor
+              above: 11000
+              below: 15000
+          then:
+            - text_sensor.template.publish:
+                id: wind_dir_card
+                state: "SO"
+            - sensor.template.publish:
+                id: wind_heading
+                state: 135.0
+      - if:
+          condition:
+            sensor.in_range:
+              id: resistance_sensor
+              above: 38000
+              below: 50000
+          then:
+            - text_sensor.template.publish:
+                id: wind_dir_card
+                state: "S"
+            - sensor.template.publish:
+                id: wind_heading
+                state: 180.0
+      - if:
+          condition:
+            sensor.in_range:
+              id: resistance_sensor
+              above: 27000
+              below: 35000
+          then:
+            - text_sensor.template.publish:
+                id: wind_dir_card
+                state: "SW"
+            - sensor.template.publish:
+                id: wind_heading
+                state: 225.0
+      - if:
+          condition:
+            sensor.in_range:
+              id: resistance_sensor
+              above: 17000
+              below: 25000
+          then:
+            - text_sensor.template.publish:
+                id: wind_dir_card
+                state: "W"
+            - sensor.template.publish:
+                id: wind_heading
+                state: 270.0
+      - if:
+          condition:
+            sensor.in_range:
+              id: resistance_sensor
+              above: 4600
+              below: 8000
+          then:
+            - text_sensor.template.publish:
+                id: wind_dir_card
+                state: "NW"
+            - sensor.template.publish:
+                id: wind_heading
+                state: 315.0
+
+  - platform: template
+    name: "Windrichtung"
+    id: wind_heading
+    unit_of_measurement: "°"
+
+text_sensor:
+  - platform: template
+    name: "Wind Kardinal Richtung"
+    id: wind_dir_card
+
+  - platform: template
+    name: 'Beaufort Windskala'
+    icon: 'mdi:tailwind'
+    id: wind_scale
+    update_interval: never
+
+  - platform: template
+    name: 'Beaufort Windskala code'
+    icon: 'mdi:tailwind'
+    id: wind_scale_code
+
+interval:
+  - interval: 1h
+    then:
+      - lambda: |-
+          id(rain_last_hour_mm) = id(rain_pulse_count) * 0.297;
+          id(rain_pulse_count) = 0;
+
+
