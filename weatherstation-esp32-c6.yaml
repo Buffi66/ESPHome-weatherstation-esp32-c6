@@ -83,6 +83,7 @@ binary_sensor:
             id(rain_timestamps)[id(rain_timestamp_index)] = millis();
             id(rain_timestamp_index) = (id(rain_timestamp_index) + 1) % 100;
             id(rain_today_mm) += 0.297;
+            id(rain_pulse_count_sensor).publish_state(id(rain_pulse_count));
 
 sensor:
   - platform: bme280_i2c
@@ -123,6 +124,14 @@ sensor:
     lambda: |-
       return id(rain_today_mm);
     update_interval: 60s
+
+  - platform: template
+    name: "Regen Impulse Anzahl"
+    id: rain_pulse_count_sensor
+    unit_of_measurement: 'count'
+    update_interval: never
+    lambda: |-
+      return id(rain_pulse_count);
 
   - platform: pulse_meter
     pin:
