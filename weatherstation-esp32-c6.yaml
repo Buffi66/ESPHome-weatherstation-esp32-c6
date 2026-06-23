@@ -135,7 +135,7 @@ sensor:
 
   - platform: pulse_meter
     pin:
-      number: GPIO16
+      number: GPIO23    
       mode: INPUT
     id: wind_speed
     unit_of_measurement: 'm/s'
