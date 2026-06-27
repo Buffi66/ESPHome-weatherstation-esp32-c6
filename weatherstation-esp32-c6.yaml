@@ -1,6 +1,8 @@
 # ESPHome-Konfiguration für ESP32-C6 DevKit C N4R2
 # Board: esp32-c6-devkitc-1
 # Variante: esp32c6
+# esphome -v run weatherstation-esp32-c6.yaml
+
 
 esphome:
   name: weatherstation-esp32-c6
@@ -23,9 +25,7 @@ wifi:
 #captive_portal:
 
 logger:
-
-web_server:
-  port: 80
+  level: VERY_VERBOSE
 
 api:
   reboot_timeout: 15min
@@ -35,9 +35,10 @@ ota:
     password: "1234321234543212345654321"
 
 i2c:
-  sda: GPIO21
-  scl: GPIO22
+  sda: GPIO22
+  scl: GPIO21
   scan: true
+  frequency: 100kHz    # ganz wichtig für ESP32-C6, sonst funktioniert der BME280 nicht. Bei 400kHz kommt es zu sporadischen Fehlern.
 
 globals:
   - id: rain_pulse_count
@@ -139,7 +140,7 @@ sensor:
       mode: INPUT
     id: wind_speed
     unit_of_measurement: 'm/s'
-    name: "Windgeschwindigkeit (m/s)"
+    name: "Windgeschwindigkeit"
     icon: 'mdi:weather-windy'
     internal_filter: 50us
     timeout: 5s
@@ -154,10 +155,10 @@ sensor:
 
   - platform: copy
     name: 'Windgeschwindigkeit Durchschnitt (m/s)'
+    unit_of_measurement: "m/s"
     icon: 'mdi:weather-windy'
     id: wind_speed_avg
     source_id: wind_speed
-    unit_of_measurement: 'm/s'
     filters:
       - throttle_average: 5s
 
@@ -225,7 +226,7 @@ sensor:
 
   - platform: adc
     id: source_sensor
-    pin: A0
+    pin: GPIO1
     name: ADC
     internal: true
     update_interval: 5s
